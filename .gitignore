@@ -1,2 +1,4 @@
 /.qodo
 /digit_model.keras
+__pycache__/
+*.py[cod]
