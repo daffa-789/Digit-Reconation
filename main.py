@@ -1,14 +1,44 @@
 import tkinter as tk
 from PIL import Image, ImageOps, ImageDraw
 import numpy as np
-import tensorflow as tf
 
-# Load model yang sudah dilatih
-try:
-    model = tf.keras.models.load_model('digit_model.keras')
-except Exception as e:
-    print("Error: File 'digit_model.keras' tidak ditemukan! Jalankan 'train.py' terlebih dahulu.")
-    exit()
+_model = None
+
+def get_model(model_path='digit_model.keras'):
+    global _model
+    if _model is None:
+        try:
+            import tensorflow as tf
+            _model = tf.keras.models.load_model(model_path)
+        except Exception as e:
+            print("Error: File 'digit_model.keras' tidak ditemukan atau TensorFlow belum terpasang!")
+            raise e
+    return _model
+
+def preprocess_canvas_image(image):
+    """Mengolah kanvas gambar PIL (latar putih, coretan hitam) menjadi input MNIST (1, 28, 28, 1)."""
+    img_inverted = ImageOps.invert(image)
+    bbox = img_inverted.getbbox()
+    if not bbox:
+        return None
+
+    # Auto-crop area angka yang digambar saja
+    cropped = img_inverted.crop(bbox)
+
+    # Buat persegi proporsional dengan padding agar posisi angka seimbang
+    w, h = cropped.size
+    max_dim = max(w, h) + 40
+    square_img = Image.new("L", (max_dim, max_dim), "black")
+    square_img.paste(cropped, ((max_dim - w) // 2, (max_dim - h) // 2))
+
+    # Resize ke 20x20 lalu taruh di tengah kanvas 28x28
+    digit_20x20 = square_img.resize((20, 20), Image.Resampling.LANCZOS)
+    final_img = Image.new("L", (28, 28), "black")
+    final_img.paste(digit_20x20, (4, 4))
+
+    # Normalisasi dan reshape untuk input model
+    img_array = np.array(final_img) / 255.0
+    return img_array.reshape(1, 28, 28, 1)
 
 class SmoothDigitRecognizerApp:
     def __init__(self, root):
@@ -68,36 +98,16 @@ class SmoothDigitRecognizerApp:
         self.lbl_result.config(text="Silahkan gambar angka...", fg="black")
 
     def predict_digit(self):
-        # 1. Invert warna terlebih dahulu karena getbbox mencari objek non-hitam
-        img_inverted = ImageOps.invert(self.image)
-        bbox = img_inverted.getbbox()
-        
-        if bbox:
-            # 2. [FITUR CERDAS] Auto-Crop area angka yang digambar saja
-            cropped = img_inverted.crop(bbox)
-            
-            # 3. Buat persegi proporsional dengan padding agar posisi angka seimbang
-            w, h = cropped.size
-            max_dim = max(w, h) + 40
-            square_img = Image.new("L", (max_dim, max_dim), "black")
-            square_img.paste(cropped, ((max_dim - w) // 2, (max_dim - h) // 2))
-            
-            # 4. Resize ke 20x20 (ukuran inti tulisan MNIST) lalu taruh di tengah kanvas 28x28
-            digit_20x20 = square_img.resize((20, 20), Image.Resampling.LANCZOS)
-            final_img = Image.new("L", (28, 28), "black")
-            final_img.paste(digit_20x20, (4, 4))
-            
-            # 5. Normalisasi dan Reshape untuk input Keras Model
-            img_array = np.array(final_img) / 255.0
-            img_input = img_array.reshape(1, 28, 28, 1)
-
-            # 6. Prediksi lewat model
-            prediction = model.predict(img_input)
-            predicted_digit = np.argmax(prediction)
-            confidence = np.max(prediction) * 100
-
-            # Tampilkan hasil
-            self.lbl_result.config(text=f"Prediksi: {predicted_digit} ({confidence:.2f}%)", fg="#4CAF50")
+        img_input = preprocess_canvas_image(self.image)
+        if img_input is not None:
+            try:
+                mdl = get_model()
+                prediction = mdl.predict(img_input)
+                predicted_digit = np.argmax(prediction)
+                confidence = np.max(prediction) * 100
+                self.lbl_result.config(text=f"Prediksi: {predicted_digit} ({confidence:.2f}%)", fg="#4CAF50")
+            except Exception as e:
+                self.lbl_result.config(text=f"Error: {e}", fg="red")
         else:
             self.lbl_result.config(text="Kanvas kosong! Silahkan gambar dulu.", fg="red")
 
